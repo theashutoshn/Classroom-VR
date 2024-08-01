@@ -1,150 +1,83 @@
 using System.Collections;
 using System.Collections.Generic;
+using System.Linq;
+using Unity.Android.Types;
 using Unity.VisualScripting;
 using UnityEngine;
 
 public class Marker : MonoBehaviour
 {
-    public GameObject brushPrefab;
-    public float _distance = 5f;
-    public Material lineMaterial;  // Assign this in the Unity Inspector
-    public GameObject whiteBoard;  // Assign the WhiteBoard object in the Inspector
-    private LineRenderer lineRenderer;
-    private List<Vector3> linePositions = new List<Vector3>();
-
-    void Start()
+    public Transform markerTip;
+    private float tipHeight = 0.02f;
+    private WhiteBoard _whiteBoard;
+    private Vector2 _touchPos;
+    private int penSize = 5;
+    private bool _touchLastFrame;
+    private Color[] _color;
+    private Vector2 _lastTouchPos;
+    private Quaternion _lastTouchRot;
+    private Renderer _renderer;
+    private void Start()
     {
-        // Ensure the brushPrefab has a LineRenderer component
-        lineRenderer = brushPrefab.GetComponent<LineRenderer>();
-        if (lineRenderer == null)
-        {
-            lineRenderer = brushPrefab.AddComponent<LineRenderer>();
-        }
-
-        // Set initial properties of the LineRenderer
-        lineRenderer.startWidth = 0.1f;
-        lineRenderer.endWidth = 0.1f;
-        lineRenderer.positionCount = 0;
-        
-        // Assign the material to the LineRenderer
-        if (lineMaterial != null)
-        {
-            lineRenderer.material = lineMaterial;
-        }
-        else
-        {
-            Debug.LogWarning("Line Material is not assigned. Please assign a material in the inspector.");
-        }
-
-        // Ensure the whiteboard's mesh is readable
-        MakeMeshReadable(whiteBoard);
+        _renderer = markerTip.GetComponent<Renderer>();
+        _color = Enumerable.Repeat(_renderer.material.color, penSize * penSize).ToArray();
+    }
+    private void Update()
+    {
+        Write();
     }
 
-    void Update()
+    private void Write()
     {
         RaycastHit hit;
-        if (Physics.Raycast(brushPrefab.transform.position, brushPrefab.transform.forward, out hit, _distance))
+        if(Physics.Raycast(markerTip.transform.position, markerTip.transform.forward, out hit, tipHeight))
         {
-            if (hit.collider.gameObject.CompareTag("WhiteBoard"))
+            
+            if(hit.transform.CompareTag("WhiteBoard"))
             {
-                // Get the UV coordinates of the hit point
-                Vector2 uv = hit.textureCoord;
+                Debug.Log("Write");
+                if(_whiteBoard == null)
+                {
+                    _whiteBoard = hit.transform.GetComponent<WhiteBoard>();
+                }
 
-                // Convert UV coordinates to world space positions
-                Vector3 worldPosition = UVToWorldPosition(uv, whiteBoard);
+                _touchPos = new Vector2(hit.textureCoord.x, hit.textureCoord.y);
 
-                // Add the world position to the list of line positions
-                linePositions.Add(worldPosition);
+                var x = (int)(_touchPos.x * _whiteBoard._textureSize.x - (penSize / 2));
+                var y = (int)(_touchPos.y * _whiteBoard._textureSize.y - (penSize / 2));
 
-                // Update the LineRenderer with the new positions
-                lineRenderer.positionCount = linePositions.Count;
-                lineRenderer.SetPositions(linePositions.ToArray());
+                if(y < 0 || y > _whiteBoard._textureSize.y || x < 0 || x > _whiteBoard._textureSize.x)
+                {
+                    return;
+                }
+
+                if(_touchLastFrame)
+                {
+                    _whiteBoard._texture.SetPixels(x, y, penSize, penSize, _color);
+
+                    for (float f = 0.01f; f < 1.00f; f += 0.07f)
+                    {
+                        var lerpX = (int)Mathf.Lerp(_lastTouchPos.x, x, f);
+                        var lerpY = (int)Mathf.Lerp(_lastTouchPos.y, y, f);
+                        _whiteBoard._texture.SetPixels(lerpX, lerpY, penSize, penSize, _color);
+                    }
+
+                    transform.rotation = _lastTouchRot;
+                    _whiteBoard._texture.Apply();
+                }
+
+                _lastTouchPos = new Vector2(x, y);
+                _lastTouchRot = transform.rotation;
+                _touchLastFrame = true;
+                return;
             }
         }
+        _whiteBoard = null;
+        _touchLastFrame = false;
     }
 
-    void MakeMeshReadable(GameObject board)
-    {
-        MeshFilter meshFilter = board.GetComponent<MeshFilter>();
-        if (meshFilter != null)
-        {
-            Mesh originalMesh = meshFilter.sharedMesh;
-            Mesh readableMesh = new Mesh();
-            readableMesh.vertices = originalMesh.vertices;
-            readableMesh.uv = originalMesh.uv;
-            readableMesh.triangles = originalMesh.triangles;
-            readableMesh.RecalculateBounds();
-            readableMesh.RecalculateNormals();
 
-            MeshCollider meshCollider = board.GetComponent<MeshCollider>();
-            if (meshCollider != null)
-            {
-                meshCollider.sharedMesh = readableMesh;
-            }
-            meshFilter.sharedMesh = readableMesh;
-        }
-    }
 
-    Vector3 UVToWorldPosition(Vector2 uv, GameObject board)
-    {
-        Renderer renderer = board.GetComponent<Renderer>();
-        MeshCollider meshCollider = board.GetComponent<MeshCollider>();
 
-        if (renderer == null || meshCollider == null)
-        {
-            Debug.LogError("WhiteBoard does not have a Renderer or MeshCollider.");
-            return Vector3.zero;
-        }
-
-        Mesh mesh = meshCollider.sharedMesh;
-        Vector3[] vertices = mesh.vertices;
-        Vector2[] uvs = mesh.uv;
-        int[] triangles = mesh.triangles;
-
-        // Find the triangle that contains the UV coordinate
-        for (int i = 0; i < triangles.Length; i += 3)
-        {
-            Vector2 uv1 = uvs[triangles[i]];
-            Vector2 uv2 = uvs[triangles[i + 1]];
-            Vector2 uv3 = uvs[triangles[i + 2]];
-
-            if (IsPointInTriangle(uv, uv1, uv2, uv3))
-            {
-                Vector3 world1 = renderer.transform.TransformPoint(vertices[triangles[i]]);
-                Vector3 world2 = renderer.transform.TransformPoint(vertices[triangles[i + 1]]);
-                Vector3 world3 = renderer.transform.TransformPoint(vertices[triangles[i + 2]]);
-
-                return BarycentricToWorld(uv, uv1, uv2, uv3, world1, world2, world3);
-            }
-        }
-
-        Debug.LogError("UV coordinate not found in any triangle.");
-        return Vector3.zero;
-    }
-
-    bool IsPointInTriangle(Vector2 p, Vector2 a, Vector2 b, Vector2 c)
-    {
-        bool b1 = Sign(p, a, b) < 0.0f;
-        bool b2 = Sign(p, b, c) < 0.0f;
-        bool b3 = Sign(p, c, a) < 0.0f;
-
-        return ((b1 == b2) && (b2 == b3));
-    }
-
-    float Sign(Vector2 p1, Vector2 p2, Vector2 p3)
-    {
-        return (p1.x - p3.x) * (p2.y - p3.y) - (p2.x - p3.x) * (p1.y - p3.y);
-    }
-
-    Vector3 BarycentricToWorld(Vector2 p, Vector2 a, Vector2 b, Vector2 c, Vector3 worldA, Vector3 worldB, Vector3 worldC)
-    {
-        Vector3 barycentric = new Vector3(
-            ((b.y - c.y) * (p.x - c.x) + (c.x - b.x) * (p.y - c.y)) / ((b.y - c.y) * (a.x - c.x) + (c.x - b.x) * (a.y - c.y)),
-            ((c.y - a.y) * (p.x - c.x) + (a.x - c.x) * (p.y - c.y)) / ((b.y - c.y) * (a.x - c.x) + (c.x - b.x) * (a.y - c.y)),
-            1.0f - (((b.y - c.y) * (p.x - c.x) + (c.x - b.x) * (p.y - c.y)) / ((b.y - c.y) * (a.x - c.x) + (c.x - b.x) * (a.y - c.y)) + ((c.y - a.y) * (p.x - c.x) + (a.x - c.x) * (p.y - c.y)) / ((b.y - c.y) * (a.x - c.x) + (c.x - b.x) * (a.y - c.y)))
-        );
-
-        return worldA * barycentric.x + worldB * barycentric.y + worldC * barycentric.z;
-    }
-    
 }
+
