@@ -30,10 +30,10 @@ public class Marker : MonoBehaviour
     private void Write()
     {
         RaycastHit hit;
-        if(Physics.Raycast(markerTip.transform.position, markerTip.transform.forward, out hit, tipHeight))
+        if(Physics.Raycast(markerTip.transform.position, markerTip.transform.forward, out hit, tipHeight)) // Raycast
         {
             
-            if(hit.transform.CompareTag("WhiteBoard"))
+            if(hit.transform.CompareTag("WhiteBoard")) // raycast check for Whiteboard
             {
                 Debug.Log("Write");
                 if(_whiteBoard == null)
